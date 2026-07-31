@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Email Finder — Auren.ai</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Special+Elite&family=Archivo+Black&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --desk: #16130F;
+    --desk-2: #1D1913;
+    --paper: #EEE6D3;
+    --paper-2: #E6DCC4;
+    --ink: #26211A;
+    --ink-dim: #6B6153;
+    --ink-faint: #9C9280;
+    --red: #A9402C;
+    --red-deep: #7C2E1F;
+    --brass: #9A7B2E;
+    --grey-stamp: #55524C;
+    --line: rgba(38,33,26,0.18);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background:
+      radial-gradient(ellipse at 15% -10%, #241f17 0%, transparent 55%),
+      radial-gradient(ellipse at 85% 110%, #201b14 0%, transparent 55%),
+      var(--desk);
+    background-attachment: fixed;
+    color: var(--ink);
+    font-family: 'IBM Plex Mono', monospace;
+    min-height: 100vh;
+    padding: 50px 20px 100px;
+    position: relative;
+  }
+  body::before {
+    content: "";
+    position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    background-image: radial-gradient(rgba(255,255,255,0.025) 1px, transparent 1px);
+    background-size: 3px 3px;
+    opacity: 0.5;
+  }
+
+  .wrap { max-width: 860px; margin: 0 auto; position: relative; z-index: 1; }
+
+  .case-header { margin-bottom: 34px; }
+  .case-number {
+    font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; letter-spacing: 0.12em;
+    color: #C9BFA6; text-transform: uppercase; margin-bottom: 14px; display: flex; align-items: center; gap: 10px;
+  }
+  .case-number::before {
+    content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--red);
+    box-shadow: 0 0 8px var(--red);
+  }
+  h1 {
+    font-family: 'Archivo Black', sans-serif; font-size: 40px; color: var(--paper);
+    margin: 0 0 6px; letter-spacing: -0.01em; text-transform: uppercase;
+    text-shadow: 3px 3px 0 rgba(169,64,44,0.35);
+  }
+  p.sub {
+    font-family: 'Special Elite', monospace; color: #B7AC93; margin: 10px 0 0;
+    font-size: 14.5px; line-height: 1.65; max-width: 580px;
+  }
+
+  .panel {
+    background: var(--paper);
+    border-radius: 3px;
+    padding: 26px 26px 22px;
+    position: relative;
+    box-shadow: 0 18px 40px rgba(0,0,0,0.45), 0 2px 0 rgba(0,0,0,0.15);
+    transform: rotate(-0.3deg);
+  }
+  .tape {
+    position: absolute; top: -14px; left: 34px; width: 92px; height: 26px;
+    background: repeating-linear-gradient(135deg, #C7BFA0, #C7BFA0 4px, #D6CFB4 4px, #D6CFB4 8px);
+    opacity: 0.85; transform: rotate(-4deg);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.25);
+  }
+  .format-hint {
+    font-family: 'Special Elite', monospace;
+    font-size: 12.5px; color: var(--ink-dim); margin-bottom: 12px;
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  }
+  .format-hint code {
+    background: rgba(38,33,26,0.08); padding: 1px 7px; border-radius: 2px;
+    font-family: 'IBM Plex Mono', monospace; color: var(--ink); border: 1px dashed var(--line);
+  }
+  textarea {
+    width: 100%; min-height: 168px; resize: vertical;
+    background: #F7F2E4;
+    border: 1px solid var(--line); border-left: 3px solid var(--red);
+    border-radius: 2px; color: var(--ink); font-family: 'IBM Plex Mono', monospace;
+    font-size: 13.5px; padding: 14px 16px; line-height: 1.7;
+  }
+  textarea:focus { outline: none; border-left-color: var(--brass); }
+  textarea::placeholder { color: #B3A98E; }
+
+  .row { display: flex; align-items: center; justify-content: space-between; margin-top: 16px; gap: 12px; flex-wrap: wrap; }
+  .hint { font-family: 'Special Elite', monospace; font-size: 12.5px; color: var(--ink-dim); }
+  .hint.warn { color: var(--red); }
+
+  button {
+    font-family: 'IBM Plex Mono', monospace; font-weight: 700; font-size: 13px;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    background: var(--ink); color: var(--paper); border: none; border-radius: 2px;
+    padding: 13px 24px; cursor: pointer; transition: transform 0.12s, background 0.12s;
+    white-space: nowrap;
+  }
+  button:hover:not(:disabled) { background: var(--red-deep); transform: translateY(-1px); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+  .btn-ghost {
+    background: none; border: 1px solid var(--ink); color: var(--ink);
+    padding: 5px 12px; font-size: 11px; font-weight: 700;
+  }
+  .btn-ghost:hover:not(:disabled) { background: var(--ink); color: var(--paper); }
+
+  .progress-wrap { margin-top: 20px; display: none; }
+  .progress-track {
+    height: 5px; background: rgba(38,33,26,0.12); position: relative; overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%; background: repeating-linear-gradient(90deg, var(--red), var(--red) 6px, var(--red-deep) 6px, var(--red-deep) 12px);
+    width: 0%; transition: width 0.3s ease;
+  }
+  .progress-label {
+    font-family: 'Special Elite', monospace; font-size: 12px; color: var(--ink-dim);
+    margin-top: 9px; text-align: center; letter-spacing: 0.03em;
+  }
+
+  .error-box {
+    background: #3A2019; border: 1px solid var(--red); color: #E8B4A6;
+    padding: 13px 18px; border-radius: 2px; font-family: 'Special Elite', monospace;
+    font-size: 13.5px; margin-top: 20px;
+  }
+
+  .summary-bar { display: flex; gap: 12px; margin: 34px 0 6px; flex-wrap: wrap; }
+  .summary-chip {
+    display: flex; align-items: center; gap: 8px;
+    background: transparent; border: 1.5px solid #4B463A;
+    border-radius: 2px; padding: 8px 16px;
+    font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; font-weight: 600;
+    color: #D9CFB6; letter-spacing: 0.03em;
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; }
+  .dot.found { background: #7FBF6E; box-shadow: 0 0 6px #7FBF6E; }
+  .dot.guessed { background: var(--brass); box-shadow: 0 0 6px var(--brass); }
+  .dot.error { background: var(--red); box-shadow: 0 0 6px var(--red); }
+
+  .section-title {
+    font-family: 'Archivo Black', sans-serif; font-size: 13px; letter-spacing: 0.05em;
+    text-transform: uppercase; color: #D9CFB6; margin: 30px 0 14px;
+    display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;
+    padding-bottom: 8px; border-bottom: 1px dashed #4B463A;
+  }
+  .toggle-link {
+    font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #D9CFB6;
+    cursor: pointer; font-weight: 600; text-decoration: underline; text-underline-offset: 3px;
+  }
+  .toggle-link:hover { color: var(--paper); }
+
+  .results { display: flex; flex-direction: column; gap: 14px; }
+
+  .result-card {
+    background: var(--paper); border-radius: 2px; padding: 16px 18px 14px;
+    position: relative; box-shadow: 0 8px 18px rgba(0,0,0,0.35);
+  }
+  .result-card:nth-child(odd) { transform: rotate(-0.4deg); }
+  .result-card:nth-child(even) { transform: rotate(0.4deg); }
+  .result-card::before {
+    content: ""; position: absolute; top: -6px; left: 50%; transform: translateX(-50%);
+    width: 10px; height: 10px; border-radius: 50%;
+    background: radial-gradient(circle at 35% 35%, #d4483a, #7c2e1f);
+    box-shadow: 0 2px 3px rgba(0,0,0,0.5);
+  }
+
+  .result-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; flex-wrap: wrap; }
+  .name-block { display: flex; flex-direction: column; gap: 2px; }
+  .biz-name { font-family: 'IBM Plex Mono', monospace; font-weight: 700; font-size: 14.5px; color: var(--ink); }
+  .domain { font-size: 11.5px; color: var(--ink-dim); font-family: 'IBM Plex Mono', monospace; }
+
+  .stamp {
+    font-family: 'Archivo Black', sans-serif; font-size: 10.5px; letter-spacing: 0.08em;
+    padding: 4px 10px; border-radius: 3px; text-transform: uppercase;
+    transform: rotate(-6deg); white-space: nowrap;
+  }
+  .found .stamp { color: #3D6B2E; border: 2px solid #3D6B2E; background: rgba(61,107,46,0.07); }
+  .guessed .stamp { color: var(--brass); border: 2px dashed var(--brass); background: rgba(154,123,46,0.08); }
+  .error .stamp { color: var(--grey-stamp); border: 2px solid var(--grey-stamp); background: rgba(85,82,76,0.08); }
+
+  .email-list { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
+  .email-row {
+    display: flex; align-items: center; justify-content: space-between;
+    font-family: 'IBM Plex Mono', monospace; font-size: 13px;
+    background: rgba(38,33,26,0.05); border-radius: 2px; padding: 8px 12px;
+    border-left: 2px solid var(--line);
+  }
+  .copy-btn {
+    background: none; border: 1px solid var(--ink-faint); color: var(--ink-dim);
+    padding: 3px 10px; font-size: 10.5px; border-radius: 2px; font-weight: 600; cursor: pointer;
+    font-family: 'IBM Plex Mono', monospace; text-transform: uppercase; letter-spacing: 0.03em;
+  }
+  .copy-btn:hover { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+
+  .empty-note, .error-note {
+    font-family: 'Special Elite', monospace; font-size: 12px; margin-top: 9px; line-height: 1.5;
+  }
+  .empty-note { color: var(--ink-dim); }
+  .error-note { color: var(--red-deep); }
+
+  .collapsed { display: none; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="case-header">
+      <div class="case-number">Case File № AUREN-EF · Status: Active</div>
+      <h1>Email Finder</h1>
+      <p class="sub">Feed it a name and a website — it goes through the homepage and contact pages looking for a visible email. No lead, no problem: it hands back the most likely guesses instead. No sign-up, no API key, no daily limit.</p>
+    </div>
+
+    <div class="panel">
+      <div class="tape"></div>
+      <div class="format-hint">Format: <code>Business Name, website.com</code> — or just the URL if you don't have a name.</div>
+      <textarea id="urls" placeholder="Prithvi Overseas, prithvioverseas.com&#10;Bells Overseas, bellsoverseas.com&#10;pioneerimmigration.com"></textarea>
+      <div class="row">
+        <span class="hint" id="countHint">0 entries</span>
+        <button id="runBtn">Open Investigation</button>
+      </div>
+      <div class="progress-wrap" id="progressWrap">
+        <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+        <div class="progress-label" id="progressLabel">Checking sites…</div>
+      </div>
+    </div>
+
+    <div id="errorBox"></div>
+
+    <div id="summaryBar" class="summary-bar" style="display:none"></div>
+
+    <div id="foundSection"></div>
+    <div id="guessedSection"></div>
+    <div id="errorSection"></div>
+  </div>
+
+<script>
+const BATCH_SIZE = 12;       // matches server's per-request cap with headroom
+const MAX_TOTAL_ENTRIES = 300;
+
+const textarea = document.getElementById('urls');
+const countHint = document.getElementById('countHint');
+const runBtn = document.getElementById('runBtn');
+const errorBox = document.getElementById('errorBox');
+const summaryBar = document.getElementById('summaryBar');
+const foundSection = document.getElementById('foundSection');
+const guessedSection = document.getElementById('guessedSection');
+const errorSection = document.getElementById('errorSection');
+const progressWrap = document.getElementById('progressWrap');
+const progressFill = document.getElementById('progressFill');
+const progressLabel = document.getElementById('progressLabel');
+
+let allResults = [];
+
+function parseEntries() {
+  const lines = textarea.value.split('\n').map((l) => l.trim()).filter(Boolean);
+  const seen = new Set();
+  const entries = [];
+  for (const line of lines) {
+    let name = '';
+    let rawUrl = line;
+    const commaIdx = line.indexOf(',');
+    if (commaIdx !== -1) {
+      name = line.slice(0, commaIdx).trim();
+      rawUrl = line.slice(commaIdx + 1).trim();
+    }
+    if (!rawUrl) continue;
+    const key = rawUrl.toLowerCase().replace(/^https?:\/\//, '').replace(/\/$/, '');
+    if (seen.has(key)) continue; // dedupe repeated domains
+    seen.add(key);
+    entries.push({ name, rawUrl });
+  }
+  return entries;
+}
+
+function updateCountHint() {
+  const n = parseEntries().length;
+  if (n > MAX_TOTAL_ENTRIES) {
+    countHint.textContent = `${n} entries — only the first ${MAX_TOTAL_ENTRIES} will run`;
+    countHint.classList.add('warn');
+  } else {
+    countHint.textContent = `${n} entr${n === 1 ? 'y' : 'ies'}`;
+    countHint.classList.remove('warn');
+  }
+}
+textarea.addEventListener('input', updateCountHint);
+
+function chunk(arr, size) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+function copyText(text, btn) {
+  navigator.clipboard.writeText(text).then(() => {
+    const old = btn.textContent;
+    btn.textContent = 'Copied';
+    setTimeout(() => { btn.textContent = old; }, 1100);
+  });
+}
+window.copyText = copyText;
+
+function copyAllFound() {
+  const lines = allResults
+    .filter((r) => r.status === 'found')
+    .flatMap((r) => r.emails.map((e) => `${r.name}\t${e}`));
+  navigator.clipboard.writeText(lines.join('\n'));
+}
+window.copyAllFound = copyAllFound;
+
+function downloadCSV() {
+  const rows = [['Business Name', 'Domain', 'Email', 'Status']];
+  allResults.forEach((r) => {
+    if (r.status === 'found') {
+      r.emails.forEach((e) => rows.push([r.name, r.domain, e, 'found']));
+    } else if (r.status === 'guessed') {
+      r.guesses.forEach((e) => rows.push([r.name, r.domain, e, 'guessed — unverified']));
+    }
+  });
+  const csv = rows.map((row) => row.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'email-finder-results.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+window.downloadCSV = downloadCSV;
+
+function resultCard(r) {
+  const list = r.status === 'found' ? r.emails : r.status === 'guessed' ? r.guesses : [];
+  const rowsHtml = list.map((email) =>
+    `<div class="email-row"><span>${email}</span><button class="copy-btn" onclick="copyText('${email}', this)">Copy</button></div>`
+  ).join('');
+
+  let noteHtml = '';
+  if (r.status === 'guessed') {
+    noteHtml = '<div class="empty-note">No email visible on the site — common-pattern guesses shown. Verify before relying on them.</div>';
+  } else if (r.status === 'error') {
+    noteHtml = `<div class="error-note">Couldn't reach this site (${r.error || 'unknown error'}).</div>`;
+  }
+
+  return `
+    <div class="result-card ${r.status}">
+      <div class="result-top">
+        <div class="name-block">
+          <span class="biz-name">${r.name}</span>
+          <span class="domain">${r.domain}</span>
+        </div>
+      </div>
+      ${rowsHtml ? `<div class="email-list">${rowsHtml}</div>` : ''}
+      ${noteHtml}
+    </div>
+  `;
+}
+
+function renderAll() {
+  const found = allResults.filter((r) => r.status === 'found');
+  const guessed = allResults.filter((r) => r.status === 'guessed');
+  const errored = allResults.filter((r) => r.status === 'error');
+
+  summaryBar.style.display = allResults.length ? 'flex' : 'none';
+  summaryBar.innerHTML = `
+    <div class="summary-chip"><span class="dot found"></span>${found.length} found</div>
+    <div class="summary-chip"><span class="dot guessed"></span>${guessed.length} guessed</div>
+    <div class="summary-chip"><span class="dot error"></span>${errored.length} unreachable</div>
+  `;
+
+  foundSection.innerHTML = found.length ? `
+    <div class="section-title">
+      <span>✅ Emails Found (${found.length})</span>
+      <span>
+        <span class="toggle-link" onclick="copyAllFound()">Copy all</span>
+        &nbsp;·&nbsp;
+        <span class="toggle-link" onclick="downloadCSV()">Export CSV</span>
+      </span>
+    </div>
+    <div class="results">${found.map(resultCard).join('')}</div>
+  ` : '';
+
+  guessedSection.innerHTML = guessed.length ? `
+    <div class="section-title"><span>❓ Not Found — Guessed Patterns (${guessed.length})</span></div>
+    <div class="results">${guessed.map(resultCard).join('')}</div>
+  ` : '';
+
+  errorSection.innerHTML = errored.length ? `
+    <div class="section-title"><span>⚠️ Unreachable (${errored.length})</span></div>
+    <div class="results">${errored.map(resultCard).join('')}</div>
+  ` : '';
+}
+
+async function runBatch(batch) {
+  const res = await fetch('/api/find-emails', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ entries: batch }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Batch failed');
+  return data.results;
+}
+
+runBtn.addEventListener('click', async () => {
+  const entries = parseEntries().slice(0, MAX_TOTAL_ENTRIES);
+  errorBox.innerHTML = '';
+  allResults = [];
+  renderAll();
+
+  if (entries.length === 0) {
+    errorBox.innerHTML = '<div class="error-box">Paste at least one website first.</div>';
+    return;
+  }
+
+  runBtn.disabled = true;
+  progressWrap.style.display = 'block';
+  const batches = chunk(entries, BATCH_SIZE);
+  let done = 0;
+
+  for (const batch of batches) {
+    try {
+      const results = await runBatch(batch);
+      allResults = allResults.concat(results);
+    } catch (e) {
+      batch.forEach((entry) => {
+        allResults.push({
+          name: entry.name || entry.rawUrl, domain: entry.rawUrl,
+          status: 'error', emails: [], guesses: [], error: e.message,
+        });
+      });
+    }
+    done += batch.length;
+    const pct = Math.round((done / entries.length) * 100);
+    progressFill.style.width = pct + '%';
+    progressLabel.textContent = `Checked ${done} of ${entries.length}…`;
+    renderAll();
+  }
+
+  progressLabel.textContent = `Done — checked ${entries.length} sites.`;
+  runBtn.disabled = false;
+  setTimeout(() => { progressWrap.style.display = 'none'; }, 1500);
+});
+
+updateCountHint();
+</script>
+</body>
+</html>
