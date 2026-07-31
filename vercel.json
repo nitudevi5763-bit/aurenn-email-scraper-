@@ -1,7 +1,7 @@
 {
   "functions": {
     "api/find-emails.js": {
-      "runtime": `now-php@1.0.0`.
+      "runtime": "nodejs20.x",
       "maxDuration": 30
     }
   }
