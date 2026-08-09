@@ -2,9 +2,44 @@
 //
 // Scrapes a website's homepage + common contact/about paths for a
 // visible email address. Falls back to common-pattern guesses when
-// nothing is found. Designed to run in small batches from the client
-// so it never hits serverless execution-time limits, no matter how
-// many URLs the user queues up in total.
+// nothing is found. For every lead that ends up with a real or
+// guessed email, it also asks Gemini to draft a short personalized
+// pitch email using a snippet of that business's own site copy.
+//
+// Designed to run in small batches from the client so it never hits
+// serverless execution-time limits, no matter how many URLs the user
+// queues up in total.
+
+// ============================================================
+// BUSINESS BRAIN — everything the AI needs to know about Auren.ai.
+// Edit this whenever your offer, pricing, or tone changes — nothing
+// else in this file needs to change.
+// ============================================================
+const BUSINESS_BRAIN = {
+  agencyName: 'Auren.ai',
+  offerHeadline: 'Custom Website + AI Assistant bundle',
+  price: '₹8,999',
+  whatItIncludes: [
+    'A modern, professional business website',
+    'An embedded AI chatbot/receptionist trained on their own services, pricing, and FAQs',
+    '24/7 lead capture — answers customer questions and books appointments even after hours',
+  ],
+  proofPoints: [
+    'Live AI receptionist demo for a visa/immigration consultancy',
+    'Live AI assistant demo for a dental clinic',
+    'Live AI assistant demo for an interior design studio',
+  ],
+  tone: 'Direct, no fluff, founder-to-founder. Short sentences. No corporate buzzwords. Sound like a real person who looked at their specific business, not a mail-merge.',
+  emailRules: [
+    '80-120 words maximum',
+    'First line must reference something specific and true about their business or website — never a generic opener',
+    'One clear gap/opportunity, not a laundry list',
+    'Soft call-to-action — offer to send a short demo link, not "book a call"',
+    'No exclamation marks, no emojis, no "Hope this finds you well"',
+  ],
+};
+
+const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
 
 const EMAIL_REGEX = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
 
@@ -17,11 +52,11 @@ const IGNORED_EMAIL_SUFFIXES = [
 
 const IGNORED_FILE_EXTENSIONS = /\.(png|jpe?g|gif|svg|webp|css|js)$/i;
 
-const PER_REQUEST_MAX_URLS = 15;   // hard cap per API call — keeps each call fast
+const PER_REQUEST_MAX_URLS = 12;   // lowered slightly — Gemini calls add time per site
 const FETCH_TIMEOUT_MS = 5000;     // per-page fetch timeout
-const SITE_CONCURRENCY = 6;        // how many sites we scrape at once per call
+const SITE_CONCURRENCY = 5;        // how many sites we scrape + draft at once per call
 
-// ---------- helpers ----------
+// ---------- scraping helpers (unchanged) ----------
 
 function normalizeUrl(input) {
   if (!input) return null;
@@ -53,6 +88,17 @@ function extractEmails(html) {
   return [...seen];
 }
 
+function extractTextSample(html, maxLen = 1200) {
+  if (!html) return '';
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLen);
+}
+
 async function fetchWithTimeout(url, ms) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ms);
@@ -73,12 +119,69 @@ async function fetchWithTimeout(url, ms) {
   }
 }
 
-async function scrapeSite(entry) {
+// ---------- NEW: Gemini email drafting ----------
+
+function buildPrompt(name, domain, pageTextSample) {
+  return `
+You are writing a cold outreach email on behalf of ${BUSINESS_BRAIN.agencyName}.
+
+BUSINESS CONTEXT:
+- Offer: ${BUSINESS_BRAIN.offerHeadline} at ${BUSINESS_BRAIN.price}
+- What's included: ${BUSINESS_BRAIN.whatItIncludes.join('; ')}
+- Proof points you can reference if relevant: ${BUSINESS_BRAIN.proofPoints.join('; ')}
+
+TONE:
+${BUSINESS_BRAIN.tone}
+
+RULES (follow exactly):
+${BUSINESS_BRAIN.emailRules.map((r) => `- ${r}`).join('\n')}
+
+LEAD DETAILS:
+- Business name: ${name}
+- Website: ${domain}
+${pageTextSample ? `- Snippet of their website text: "${pageTextSample.slice(0, 500)}"` : '- (no website text available — keep it general but still specific to their industry)'}
+
+Return ONLY valid JSON, no markdown, no code fences, in this exact shape:
+{"subject": "...", "body": "..."}
+`.trim();
+}
+
+async function generatePitchEmail(name, domain, pageTextSample, apiKey) {
+  if (!apiKey) return null;
+
+  try {
+    const res = await fetch(`${GEMINI_URL}?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: buildPrompt(name, domain, pageTextSample) }] }],
+        generationConfig: { temperature: 0.7, maxOutputTokens: 400 },
+      }),
+      signal: AbortSignal.timeout(12000),
+    });
+
+    if (!res.ok) return null;
+
+    const data = await res.json();
+    const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const cleaned = rawText.replace(/```json|```/g, '').trim();
+
+    const parsed = JSON.parse(cleaned);
+    if (!parsed.subject || !parsed.body) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+// ---------- scrape + draft, per site ----------
+
+async function scrapeSite(entry, geminiApiKey) {
   const { name, rawUrl } = entry;
   const origin = normalizeUrl(rawUrl);
 
   if (!origin) {
-    return { name: name || rawUrl, domain: rawUrl, status: 'error', emails: [], guesses: [], error: 'Invalid URL' };
+    return { name: name || rawUrl, domain: rawUrl, status: 'error', emails: [], guesses: [], pitchEmail: null, error: 'Invalid URL' };
   }
 
   let domain;
@@ -90,18 +193,17 @@ async function scrapeSite(entry) {
 
   const found = new Set();
   let anyPageReachable = false;
+  let pageTextSample = '';
 
-  // 1. Check the homepage first — cheapest case, most sites list an
-  //    email right on the page or in the footer.
+  // 1. Check the homepage first.
   const homeHtml = await fetchWithTimeout(origin, FETCH_TIMEOUT_MS);
   if (homeHtml !== null) {
     anyPageReachable = true;
     extractEmails(homeHtml).forEach((e) => found.add(e));
+    pageTextSample = extractTextSample(homeHtml);
   }
 
-  // 2. If nothing on the homepage, check the remaining contact/about
-  //    paths IN PARALLEL (not one-by-one) so a slow or dead path can't
-  //    blow out the total request time.
+  // 2. If nothing on the homepage, check remaining contact/about paths in parallel.
   if (found.size === 0) {
     const remainingPaths = CONTACT_PATHS.filter((p) => p !== '');
     const pageResults = await Promise.all(
@@ -111,24 +213,28 @@ async function scrapeSite(entry) {
       if (html !== null) {
         anyPageReachable = true;
         extractEmails(html).forEach((e) => found.add(e));
+        if (!pageTextSample) pageTextSample = extractTextSample(html);
       }
     });
   }
 
+  const bestNameForPrompt = name || domain;
+
   if (found.size > 0) {
-    return { name: name || domain, domain, status: 'found', emails: [...found], guesses: [] };
+    const pitchEmail = await generatePitchEmail(bestNameForPrompt, domain, pageTextSample, geminiApiKey);
+    return { name: bestNameForPrompt, domain, status: 'found', emails: [...found], guesses: [], pitchEmail };
   }
 
   if (!anyPageReachable) {
-    return { name: name || domain, domain, status: 'error', emails: [], guesses: [], error: 'Site unreachable' };
+    return { name: bestNameForPrompt, domain, status: 'error', emails: [], guesses: [], pitchEmail: null, error: 'Site unreachable' };
   }
 
   const guesses = ['info', 'contact', 'admin', 'hello'].map((p) => `${p}@${domain}`);
-  return { name: name || domain, domain, status: 'guessed', emails: [], guesses };
+  const pitchEmail = await generatePitchEmail(bestNameForPrompt, domain, pageTextSample, geminiApiKey);
+  return { name: bestNameForPrompt, domain, status: 'guessed', emails: [], guesses, pitchEmail };
 }
 
-// Simple concurrency-limited map so we never fire more than N fetch
-// chains at once, regardless of how many URLs are in the batch.
+// Simple concurrency-limited map.
 async function mapWithConcurrency(items, limit, worker) {
   const results = new Array(items.length);
   let cursor = 0;
@@ -183,9 +289,15 @@ module.exports = async (req, res) => {
     .filter((e) => e && e.rawUrl)
     .map((e) => ({ name: (e.name || '').trim(), rawUrl: String(e.rawUrl).trim() }));
 
+  const geminiApiKey = process.env.GEMINI_API_KEY || '';
+
   try {
-    const results = await mapWithConcurrency(entries, SITE_CONCURRENCY, scrapeSite);
-    res.status(200).json({ results });
+    const results = await mapWithConcurrency(
+      entries,
+      SITE_CONCURRENCY,
+      (entry) => scrapeSite(entry, geminiApiKey)
+    );
+    res.status(200).json({ results, geminiEnabled: Boolean(geminiApiKey) });
   } catch (err) {
     res.status(500).json({ error: 'Unexpected server error while scraping.' });
   }
