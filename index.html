@@ -21,6 +21,7 @@
     --brass: #9A7B2E;
     --grey-stamp: #55524C;
     --line: rgba(38,33,26,0.18);
+    --memo: #FBF6E9;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
@@ -62,7 +63,15 @@
   }
   p.sub {
     font-family: 'Special Elite', monospace; color: #B7AC93; margin: 10px 0 0;
-    font-size: 14.5px; line-height: 1.65; max-width: 580px;
+    font-size: 14.5px; line-height: 1.65; max-width: 600px;
+  }
+
+  .gemini-banner {
+    display: none;
+    margin-top: 16px;
+    background: rgba(154,123,46,0.12); border: 1px dashed var(--brass);
+    color: #D9C48B; font-family: 'Special Elite', monospace; font-size: 12.5px;
+    padding: 10px 16px; border-radius: 2px; line-height: 1.6; max-width: 600px;
   }
 
   .panel {
@@ -210,6 +219,47 @@
   .empty-note { color: var(--ink-dim); }
   .error-note { color: var(--red-deep); }
 
+  /* --- NEW: personalized draft email --- */
+  .pitch-toggle {
+    margin-top: 12px; display: flex; align-items: center; gap: 7px;
+    font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; font-weight: 700;
+    letter-spacing: 0.04em; text-transform: uppercase; color: var(--red-deep);
+    cursor: pointer; user-select: none; width: fit-content;
+    padding: 6px 0;
+  }
+  .pitch-toggle::before { content: "✉"; font-size: 13px; }
+  .pitch-toggle .chevron { transition: transform 0.15s ease; font-size: 9px; margin-left: 2px; }
+  .pitch-toggle.open .chevron { transform: rotate(90deg); }
+
+  .pitch-memo {
+    display: none; margin-top: 8px;
+    background: var(--memo);
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    padding: 14px 16px 12px;
+    position: relative;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.4);
+  }
+  .pitch-memo.open { display: block; }
+  .pitch-subject {
+    font-family: 'IBM Plex Mono', monospace; font-weight: 700; font-size: 13px;
+    color: var(--ink); margin-bottom: 8px; padding-bottom: 8px;
+    border-bottom: 1px dashed var(--line);
+  }
+  .pitch-subject .lbl {
+    color: var(--ink-faint); font-weight: 600; text-transform: uppercase;
+    font-size: 10px; letter-spacing: 0.05em; margin-right: 6px;
+  }
+  .pitch-body {
+    font-family: 'Special Elite', monospace; font-size: 13px; color: var(--ink);
+    line-height: 1.75; white-space: pre-wrap;
+  }
+  .pitch-actions { margin-top: 12px; display: flex; justify-content: flex-end; }
+  .pitch-unavailable {
+    font-family: 'Special Elite', monospace; font-size: 12px; color: var(--ink-faint);
+    margin-top: 9px; line-height: 1.5;
+  }
+
   .collapsed { display: none; }
 </style>
 </head>
@@ -218,7 +268,8 @@
     <div class="case-header">
       <div class="case-number">Case File № AUREN-EF · Status: Active</div>
       <h1>Email Finder</h1>
-      <p class="sub">Feed it a name and a website — it goes through the homepage and contact pages looking for a visible email. No lead, no problem: it hands back the most likely guesses instead. No sign-up, no API key, no daily limit.</p>
+      <p class="sub">Feed it a name and a website — it goes through the homepage and contact pages looking for a visible email, then drafts a personalized pitch email for every lead it finds one for. No sign-up, no daily limit.</p>
+      <div class="gemini-banner" id="geminiBanner">⚠ GEMINI_API_KEY isn't set on the server — emails are still being found, but personalized drafts won't generate until it's added.</div>
     </div>
 
     <div class="panel">
@@ -245,7 +296,7 @@
   </div>
 
 <script>
-const BATCH_SIZE = 12;       // matches server's per-request cap with headroom
+const BATCH_SIZE = 10;       // matches server's per-request cap with headroom
 const MAX_TOTAL_ENTRIES = 300;
 
 const textarea = document.getElementById('urls');
@@ -259,8 +310,10 @@ const errorSection = document.getElementById('errorSection');
 const progressWrap = document.getElementById('progressWrap');
 const progressFill = document.getElementById('progressFill');
 const progressLabel = document.getElementById('progressLabel');
+const geminiBanner = document.getElementById('geminiBanner');
 
 let allResults = [];
+let geminiSeenDisabled = false;
 
 function parseEntries() {
   const lines = textarea.value.split('\n').map((l) => l.trim()).filter(Boolean);
@@ -301,14 +354,13 @@ function chunk(arr, size) {
   return out;
 }
 
-function copyText(text, btn) {
+function copyToClipboard(text, btn) {
   navigator.clipboard.writeText(text).then(() => {
     const old = btn.textContent;
     btn.textContent = 'Copied';
     setTimeout(() => { btn.textContent = old; }, 1100);
   });
 }
-window.copyText = copyText;
 
 function copyAllFound() {
   const lines = allResults
@@ -319,12 +371,14 @@ function copyAllFound() {
 window.copyAllFound = copyAllFound;
 
 function downloadCSV() {
-  const rows = [['Business Name', 'Domain', 'Email', 'Status']];
+  const rows = [['Business Name', 'Domain', 'Email', 'Status', 'Draft Subject', 'Draft Body']];
   allResults.forEach((r) => {
+    const subject = r.pitchEmail ? r.pitchEmail.subject : '';
+    const draftBody = r.pitchEmail ? r.pitchEmail.body : '';
     if (r.status === 'found') {
-      r.emails.forEach((e) => rows.push([r.name, r.domain, e, 'found']));
+      r.emails.forEach((e) => rows.push([r.name, r.domain, e, 'found', subject, draftBody]));
     } else if (r.status === 'guessed') {
-      r.guesses.forEach((e) => rows.push([r.name, r.domain, e, 'guessed — unverified']));
+      r.guesses.forEach((e) => rows.push([r.name, r.domain, e, 'guessed — unverified', subject, draftBody]));
     }
   });
   const csv = rows.map((row) => row.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
@@ -338,10 +392,54 @@ function downloadCSV() {
 }
 window.downloadCSV = downloadCSV;
 
-function resultCard(r) {
+// Event delegation for everything inside result cards — avoids fragile
+// string-escaping when subject/body text contains quotes or apostrophes.
+document.addEventListener('click', (e) => {
+  const copyBtn = e.target.closest('.copy-btn[data-email]');
+  if (copyBtn) {
+    copyToClipboard(copyBtn.dataset.email, copyBtn);
+    return;
+  }
+
+  const toggle = e.target.closest('.pitch-toggle');
+  if (toggle) {
+    const memo = toggle.nextElementSibling;
+    const isOpen = memo.classList.toggle('open');
+    toggle.classList.toggle('open', isOpen);
+    const label = toggle.querySelector('.label');
+    if (label) label.textContent = isOpen ? 'Hide Draft Email' : 'View Draft Email';
+    return;
+  }
+
+  const copyPitchBtn = e.target.closest('.copy-pitch-btn');
+  if (copyPitchBtn) {
+    const idx = Number(copyPitchBtn.dataset.idx);
+    const r = allResults[idx];
+    if (r && r.pitchEmail) {
+      copyToClipboard(`Subject: ${r.pitchEmail.subject}\n\n${r.pitchEmail.body}`, copyPitchBtn);
+    }
+    return;
+  }
+});
+
+function pitchSection(r, idx) {
+  if (r.pitchEmail) {
+    return `
+      <div class="pitch-toggle"><span class="label">View Draft Email</span><span class="chevron">▶</span></div>
+      <div class="pitch-memo">
+        <div class="pitch-subject"><span class="lbl">Subject</span>${r.pitchEmail.subject}</div>
+        <div class="pitch-body">${r.pitchEmail.body}</div>
+        <div class="pitch-actions"><button class="copy-btn copy-pitch-btn" data-idx="${idx}">Copy Email</button></div>
+      </div>
+    `;
+  }
+  return `<div class="pitch-unavailable">No draft email generated for this lead yet.</div>`;
+}
+
+function resultCard(r, idx) {
   const list = r.status === 'found' ? r.emails : r.status === 'guessed' ? r.guesses : [];
   const rowsHtml = list.map((email) =>
-    `<div class="email-row"><span>${email}</span><button class="copy-btn" onclick="copyText('${email}', this)">Copy</button></div>`
+    `<div class="email-row"><span>${email}</span><button class="copy-btn" data-email="${email}">Copy</button></div>`
   ).join('');
 
   let noteHtml = '';
@@ -350,6 +448,8 @@ function resultCard(r) {
   } else if (r.status === 'error') {
     noteHtml = `<div class="error-note">Couldn't reach this site (${r.error || 'unknown error'}).</div>`;
   }
+
+  const showPitch = r.status === 'found' || r.status === 'guessed';
 
   return `
     <div class="result-card ${r.status}">
@@ -361,6 +461,7 @@ function resultCard(r) {
       </div>
       ${rowsHtml ? `<div class="email-list">${rowsHtml}</div>` : ''}
       ${noteHtml}
+      ${showPitch ? pitchSection(r, idx) : ''}
     </div>
   `;
 }
@@ -386,17 +487,17 @@ function renderAll() {
         <span class="toggle-link" onclick="downloadCSV()">Export CSV</span>
       </span>
     </div>
-    <div class="results">${found.map(resultCard).join('')}</div>
+    <div class="results">${found.map((r) => resultCard(r, allResults.indexOf(r))).join('')}</div>
   ` : '';
 
   guessedSection.innerHTML = guessed.length ? `
     <div class="section-title"><span>❓ Not Found — Guessed Patterns (${guessed.length})</span></div>
-    <div class="results">${guessed.map(resultCard).join('')}</div>
+    <div class="results">${guessed.map((r) => resultCard(r, allResults.indexOf(r))).join('')}</div>
   ` : '';
 
   errorSection.innerHTML = errored.length ? `
     <div class="section-title"><span>⚠️ Unreachable (${errored.length})</span></div>
-    <div class="results">${errored.map(resultCard).join('')}</div>
+    <div class="results">${errored.map((r) => resultCard(r, allResults.indexOf(r))).join('')}</div>
   ` : '';
 }
 
@@ -408,6 +509,10 @@ async function runBatch(batch) {
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Batch failed');
+  if (data.geminiEnabled === false && !geminiSeenDisabled) {
+    geminiSeenDisabled = true;
+    geminiBanner.style.display = 'block';
+  }
   return data.results;
 }
 
@@ -415,6 +520,8 @@ runBtn.addEventListener('click', async () => {
   const entries = parseEntries().slice(0, MAX_TOTAL_ENTRIES);
   errorBox.innerHTML = '';
   allResults = [];
+  geminiSeenDisabled = false;
+  geminiBanner.style.display = 'none';
   renderAll();
 
   if (entries.length === 0) {
@@ -435,14 +542,14 @@ runBtn.addEventListener('click', async () => {
       batch.forEach((entry) => {
         allResults.push({
           name: entry.name || entry.rawUrl, domain: entry.rawUrl,
-          status: 'error', emails: [], guesses: [], error: e.message,
+          status: 'error', emails: [], guesses: [], pitchEmail: null, error: e.message,
         });
       });
     }
     done += batch.length;
     const pct = Math.round((done / entries.length) * 100);
     progressFill.style.width = pct + '%';
-    progressLabel.textContent = `Checked ${done} of ${entries.length}…`;
+    progressLabel.textContent = `Checked ${done} of ${entries.length} — finding emails & drafting pitches…`;
     renderAll();
   }
 
