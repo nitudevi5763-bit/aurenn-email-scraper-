@@ -433,7 +433,8 @@ function pitchSection(r, idx) {
       </div>
     `;
   }
-  return `<div class="pitch-unavailable">No draft email generated for this lead yet.</div>`;
+  const reason = r.pitchError ? r.pitchError : 'No draft email generated for this lead yet.';
+  return `<div class="pitch-unavailable">⚠ ${reason}</div>`;
 }
 
 function resultCard(r, idx) {
