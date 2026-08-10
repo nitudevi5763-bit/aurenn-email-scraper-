@@ -39,7 +39,9 @@ const BUSINESS_BRAIN = {
   ],
 };
 
-const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
+// gemini-2.5-flash is on Google's retirement list for Oct 2026 — using
+// their current recommended low-cost, high-volume model instead.
+const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent';
 
 const EMAIL_REGEX = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
 
@@ -146,11 +148,15 @@ Return ONLY valid JSON, no markdown, no code fences, in this exact shape:
 `.trim();
 }
 
+// Returns { ok: true, subject, body } on success, or
+// { ok: false, error: "<human-readable reason>" } on failure — never
+// silently swallows the problem, so we can see exactly what broke.
 async function generatePitchEmail(name, domain, pageTextSample, apiKey) {
-  if (!apiKey) return null;
+  if (!apiKey) return { ok: false, error: 'GEMINI_API_KEY not set on the server' };
 
+  let res;
   try {
-    const res = await fetch(`${GEMINI_URL}?key=${apiKey}`, {
+    res = await fetch(`${GEMINI_URL}?key=${apiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -159,18 +165,37 @@ async function generatePitchEmail(name, domain, pageTextSample, apiKey) {
       }),
       signal: AbortSignal.timeout(12000),
     });
+  } catch (err) {
+    console.error('Gemini fetch failed:', err.message);
+    return { ok: false, error: `Network error calling Gemini: ${err.message}` };
+  }
 
-    if (!res.ok) return null;
+  if (!res.ok) {
+    const errBody = await res.text().catch(() => '');
+    console.error('Gemini API error', res.status, errBody);
+    return { ok: false, error: `Gemini API returned ${res.status}: ${errBody.slice(0, 200)}` };
+  }
 
-    const data = await res.json();
-    const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    const cleaned = rawText.replace(/```json|```/g, '').trim();
+  const data = await res.json();
+  const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
 
+  if (!rawText) {
+    const blockReason = data.promptFeedback?.blockReason;
+    console.error('Gemini returned no text.', JSON.stringify(data).slice(0, 300));
+    return { ok: false, error: blockReason ? `Gemini blocked the response: ${blockReason}` : 'Gemini returned an empty response' };
+  }
+
+  const cleaned = rawText.replace(/```json|```/g, '').trim();
+
+  try {
     const parsed = JSON.parse(cleaned);
-    if (!parsed.subject || !parsed.body) return null;
-    return parsed;
-  } catch {
-    return null;
+    if (!parsed.subject || !parsed.body) {
+      return { ok: false, error: 'Gemini response was missing subject/body' };
+    }
+    return { ok: true, subject: parsed.subject, body: parsed.body };
+  } catch (err) {
+    console.error('Failed to parse Gemini JSON:', cleaned.slice(0, 300));
+    return { ok: false, error: 'Could not parse Gemini\'s response as JSON' };
   }
 }
 
@@ -221,17 +246,21 @@ async function scrapeSite(entry, geminiApiKey) {
   const bestNameForPrompt = name || domain;
 
   if (found.size > 0) {
-    const pitchEmail = await generatePitchEmail(bestNameForPrompt, domain, pageTextSample, geminiApiKey);
-    return { name: bestNameForPrompt, domain, status: 'found', emails: [...found], guesses: [], pitchEmail };
+    const pitchResult = await generatePitchEmail(bestNameForPrompt, domain, pageTextSample, geminiApiKey);
+    const pitchEmail = pitchResult.ok ? { subject: pitchResult.subject, body: pitchResult.body } : null;
+    const pitchError = pitchResult.ok ? null : pitchResult.error;
+    return { name: bestNameForPrompt, domain, status: 'found', emails: [...found], guesses: [], pitchEmail, pitchError };
   }
 
   if (!anyPageReachable) {
-    return { name: bestNameForPrompt, domain, status: 'error', emails: [], guesses: [], pitchEmail: null, error: 'Site unreachable' };
+    return { name: bestNameForPrompt, domain, status: 'error', emails: [], guesses: [], pitchEmail: null, pitchError: null, error: 'Site unreachable' };
   }
 
   const guesses = ['info', 'contact', 'admin', 'hello'].map((p) => `${p}@${domain}`);
-  const pitchEmail = await generatePitchEmail(bestNameForPrompt, domain, pageTextSample, geminiApiKey);
-  return { name: bestNameForPrompt, domain, status: 'guessed', emails: [], guesses, pitchEmail };
+  const pitchResult = await generatePitchEmail(bestNameForPrompt, domain, pageTextSample, geminiApiKey);
+  const pitchEmail = pitchResult.ok ? { subject: pitchResult.subject, body: pitchResult.body } : null;
+  const pitchError = pitchResult.ok ? null : pitchResult.error;
+  return { name: bestNameForPrompt, domain, status: 'guessed', emails: [], guesses, pitchEmail, pitchError };
 }
 
 // Simple concurrency-limited map.
