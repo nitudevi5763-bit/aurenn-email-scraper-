@@ -80,7 +80,7 @@ const IGNORED_FILE_EXTENSIONS = /\.(png|jpe?g|gif|svg|webp|css|js)$/i;
 
 const PER_REQUEST_MAX_ENTRIES = 12; // lowered — Gemini/search calls add time per entry
 const FETCH_TIMEOUT_MS = 5000;      // per-page fetch timeout
-const CONCURRENCY = 5;              // how many entries we process at once per call
+const CONCURRENCY = 3;              // kept modest so Gemini's free-tier RPM limit isn't burst through
 const NAME_SEARCH_RESULTS_TO_CHECK = 4; // how many search results to try per name-only lead
 
 // ---------- shared scraping helpers ----------
@@ -182,10 +182,16 @@ Return ONLY valid JSON, no markdown, no code fences, in this exact shape:
 `.trim();
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 // Returns { ok: true, subject, body } on success, or
 // { ok: false, error: "<human-readable reason>" } on failure — never
 // silently swallows the problem, so we can see exactly what broke.
-async function generatePitchEmail(promptParams, apiKey) {
+// Retries once on 429 (rate limit) since that's usually a transient
+// per-minute burst, not a real quota exhaustion.
+async function generatePitchEmail(promptParams, apiKey, attempt = 1) {
   if (!apiKey) return { ok: false, error: 'GEMINI_API_KEY not set on the server' };
 
   let res;
@@ -204,10 +210,21 @@ async function generatePitchEmail(promptParams, apiKey) {
     return { ok: false, error: `Network error calling Gemini: ${err.message}` };
   }
 
+  if (res.status === 429 && attempt < 2) {
+    const retryAfterHeader = res.headers.get('retry-after');
+    const waitMs = retryAfterHeader ? Math.min(Number(retryAfterHeader) * 1000, 4000) : 3000;
+    console.error(`Gemini 429 — retrying once after ${waitMs}ms`);
+    await sleep(waitMs);
+    return generatePitchEmail(promptParams, apiKey, attempt + 1);
+  }
+
   if (!res.ok) {
     const errBody = await res.text().catch(() => '');
     console.error('Gemini API error', res.status, errBody);
-    return { ok: false, error: `Gemini API returned ${res.status}: ${errBody.slice(0, 200)}` };
+    const friendly = res.status === 429
+      ? 'Gemini free-tier rate limit hit (too many requests per minute) — this lead will get a draft on the next run.'
+      : `Gemini API returned ${res.status}: ${errBody.slice(0, 200)}`;
+    return { ok: false, error: friendly };
   }
 
   const data = await res.json();
