@@ -59,12 +59,42 @@ const BUSINESS_BRAIN = {
     'Soft call-to-action — offer to send a short demo link, not "book a call"',
     'No exclamation marks, no emojis, no "Hope this finds you well"',
   ],
+
+  subjectRules: [
+    'Under 9 words, no title case, lowercase-first-word style (reads as a real email, not a marketing blast)',
+    'NEVER use these overused patterns: "Quick question about X", "X — quick question", "Question for X", "Regarding X", "Idea for X", "X Team", anything starting with "Quick" or ending in "?" with no other content',
+    'Must reference the ONE specific, concrete detail found about this business (a real problem, a real observation) — not a category or generic hook',
+    'Should read like a subject line a real person who actually looked at their business would type, in a hurry, not a template',
+    'No emojis, no ALL CAPS, no spammy words (free, guarantee, act now)',
+  ],
 };
 
-// gemini-2.5-flash is on Google's retirement list for Oct 2026 — using
-// their current recommended low-cost, high-volume model instead.
-const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent';
+// gemini-3.5-flash-lite is a PREVIEW model with tighter, less predictable
+// rate limits than Google's stable models — that's what caused rate-limit
+// failures even at low concurrency. Switched to gemini-2.5-flash-lite,
+// the stable, high-limit free-tier workhorse. Note: this model is on
+// Google's retirement list for Oct 2026 — revisit before then.
+const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent';
 const CUSTOM_SEARCH_URL = 'https://www.googleapis.com/customsearch/v1';
+
+// Hard-throttle: guarantees a minimum gap between EVERY Gemini call in
+// this invocation, no matter how many run "concurrently" — this is what
+// actually prevents bursting past the free tier's per-minute limit,
+// rather than relying on concurrency limits alone.
+const MIN_GEMINI_GAP_MS = 4200; // ~14 calls/minute, safely under the free tier's RPM
+let lastGeminiCallAt = 0;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function throttleGemini() {
+  const now = Date.now();
+  const earliestAllowed = lastGeminiCallAt + MIN_GEMINI_GAP_MS;
+  const wait = Math.max(0, earliestAllowed - now);
+  lastGeminiCallAt = now + wait;
+  if (wait > 0) await sleep(wait);
+}
 
 const EMAIL_REGEX = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
 
@@ -169,8 +199,11 @@ ${pitchAngle}
 TONE:
 ${BUSINESS_BRAIN.tone}
 
-RULES (follow exactly):
+RULES FOR THE EMAIL BODY (follow exactly):
 ${BUSINESS_BRAIN.emailRules.map((r) => `- ${r}`).join('\n')}
+
+RULES FOR THE SUBJECT LINE (follow exactly — this is the part that gets it opened, take it seriously):
+${BUSINESS_BRAIN.subjectRules.map((r) => `- ${r}`).join('\n')}
 
 LEAD DETAILS:
 - Business name: ${name}
@@ -189,10 +222,12 @@ function sleep(ms) {
 // Returns { ok: true, subject, body } on success, or
 // { ok: false, error: "<human-readable reason>" } on failure — never
 // silently swallows the problem, so we can see exactly what broke.
-// Retries once on 429 (rate limit) since that's usually a transient
+// Retries on 429 (rate limit) since that's usually a transient
 // per-minute burst, not a real quota exhaustion.
 async function generatePitchEmail(promptParams, apiKey, attempt = 1) {
   if (!apiKey) return { ok: false, error: 'GEMINI_API_KEY not set on the server' };
+
+  await throttleGemini(); // guarantees spacing between every call, regardless of concurrency
 
   let res;
   try {
@@ -201,7 +236,7 @@ async function generatePitchEmail(promptParams, apiKey, attempt = 1) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts: [{ text: buildPrompt(promptParams) }] }],
-        generationConfig: { temperature: 0.7, maxOutputTokens: 400 },
+        generationConfig: { temperature: 0.8, maxOutputTokens: 400 },
       }),
       signal: AbortSignal.timeout(12000),
     });
@@ -210,10 +245,10 @@ async function generatePitchEmail(promptParams, apiKey, attempt = 1) {
     return { ok: false, error: `Network error calling Gemini: ${err.message}` };
   }
 
-  if (res.status === 429 && attempt < 2) {
+  if (res.status === 429 && attempt < 3) {
     const retryAfterHeader = res.headers.get('retry-after');
-    const waitMs = retryAfterHeader ? Math.min(Number(retryAfterHeader) * 1000, 4000) : 3000;
-    console.error(`Gemini 429 — retrying once after ${waitMs}ms`);
+    const waitMs = retryAfterHeader ? Math.min(Number(retryAfterHeader) * 1000, 6000) : 4000 * attempt;
+    console.error(`Gemini 429 — retrying (attempt ${attempt + 1}) after ${waitMs}ms`);
     await sleep(waitMs);
     return generatePitchEmail(promptParams, apiKey, attempt + 1);
   }
