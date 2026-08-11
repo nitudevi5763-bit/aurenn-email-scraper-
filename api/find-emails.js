@@ -74,7 +74,7 @@ const BUSINESS_BRAIN = {
 // failures even at low concurrency. Switched to gemini-2.5-flash-lite,
 // the stable, high-limit free-tier workhorse. Note: this model is on
 // Google's retirement list for Oct 2026 — revisit before then.
-const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent';
+const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent';
 const CUSTOM_SEARCH_URL = 'https://www.googleapis.com/customsearch/v1';
 
 // Hard-throttle: guarantees a minimum gap between EVERY Gemini call in
