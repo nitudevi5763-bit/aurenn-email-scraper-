@@ -270,12 +270,13 @@
       <h1>Email Finder</h1>
       <p class="sub">Feed it a name and a website — it goes through the homepage and contact pages looking for a visible email, then drafts a personalized pitch email for every lead it finds one for. No sign-up, no daily limit.</p>
       <div class="gemini-banner" id="geminiBanner">⚠ GEMINI_API_KEY isn't set on the server — emails are still being found, but personalized drafts won't generate until it's added.</div>
+      <div class="gemini-banner" id="searchBanner">⚠ Name-only entries need GOOGLE_CUSTOM_SEARCH_API_KEY and GOOGLE_CUSTOM_SEARCH_CX set on the server to search for businesses without a website.</div>
     </div>
 
     <div class="panel">
       <div class="tape"></div>
-      <div class="format-hint">Format: <code>Business Name, website.com</code> — or just the URL if you don't have a name.</div>
-      <textarea id="urls" placeholder="Prithvi Overseas, prithvioverseas.com&#10;Bells Overseas, bellsoverseas.com&#10;pioneerimmigration.com"></textarea>
+      <div class="format-hint">Two formats, mix freely: <code>Business Name, website.com</code> for leads with a site — or just <code>Business Name</code> on its own line for leads with no website.</div>
+      <textarea id="urls" placeholder="Prithvi Overseas, prithvioverseas.com&#10;Bells Overseas, bellsoverseas.com&#10;pioneerimmigration.com&#10;SmartStudy Consultants"></textarea>
       <div class="row">
         <span class="hint" id="countHint">0 entries</span>
         <button id="runBtn">Open Investigation</button>
@@ -311,9 +312,15 @@ const progressWrap = document.getElementById('progressWrap');
 const progressFill = document.getElementById('progressFill');
 const progressLabel = document.getElementById('progressLabel');
 const geminiBanner = document.getElementById('geminiBanner');
+const searchBanner = document.getElementById('searchBanner');
 
 let allResults = [];
 let geminiSeenDisabled = false;
+let searchSeenDisabled = false;
+
+function looksLikeUrl(s) {
+  return /^https?:\/\//i.test(s) || /\.[a-z]{2,}(\/.*)?$/i.test(s.trim());
+}
 
 function parseEntries() {
   const lines = textarea.value.split('\n').map((l) => l.trim()).filter(Boolean);
@@ -321,15 +328,24 @@ function parseEntries() {
   const entries = [];
   for (const line of lines) {
     let name = '';
-    let rawUrl = line;
+    let rawUrl = null;
+
     const commaIdx = line.indexOf(',');
     if (commaIdx !== -1) {
       name = line.slice(0, commaIdx).trim();
-      rawUrl = line.slice(commaIdx + 1).trim();
+      rawUrl = line.slice(commaIdx + 1).trim() || null;
+    } else if (looksLikeUrl(line)) {
+      rawUrl = line;
+    } else {
+      // No comma, doesn't look like a URL — treat as a bare business
+      // name with no known website.
+      name = line;
     }
-    if (!rawUrl) continue;
-    const key = rawUrl.toLowerCase().replace(/^https?:\/\//, '').replace(/\/$/, '');
-    if (seen.has(key)) continue; // dedupe repeated domains
+
+    const key = rawUrl
+      ? rawUrl.toLowerCase().replace(/^https?:\/\//, '').replace(/\/$/, '')
+      : `name:${name.toLowerCase()}`;
+    if (seen.has(key)) continue; // dedupe
     seen.add(key);
     entries.push({ name, rawUrl });
   }
@@ -444,10 +460,12 @@ function resultCard(r, idx) {
   ).join('');
 
   let noteHtml = '';
-  if (r.status === 'guessed') {
+  if (r.status === 'guessed' && list.length > 0) {
     noteHtml = '<div class="empty-note">No email visible on the site — common-pattern guesses shown. Verify before relying on them.</div>';
+  } else if (r.status === 'guessed' && list.length === 0) {
+    noteHtml = '<div class="empty-note">No website and no public email found anywhere — draft below is ready for when you get one, or adapt it for WhatsApp/phone outreach.</div>';
   } else if (r.status === 'error') {
-    noteHtml = `<div class="error-note">Couldn't reach this site (${r.error || 'unknown error'}).</div>`;
+    noteHtml = `<div class="error-note">${r.error || 'Something went wrong with this entry.'}</div>`;
   }
 
   const showPitch = r.status === 'found' || r.status === 'guessed';
@@ -457,7 +475,7 @@ function resultCard(r, idx) {
       <div class="result-top">
         <div class="name-block">
           <span class="biz-name">${r.name}</span>
-          <span class="domain">${r.domain}</span>
+          <span class="domain">${r.domain || 'no website'}</span>
         </div>
       </div>
       ${rowsHtml ? `<div class="email-list">${rowsHtml}</div>` : ''}
@@ -514,6 +532,13 @@ async function runBatch(batch) {
     geminiSeenDisabled = true;
     geminiBanner.style.display = 'block';
   }
+  if (data.nameSearchEnabled === false && !searchSeenDisabled) {
+    const hadNameOnlyEntry = batch.some((e) => !e.rawUrl);
+    if (hadNameOnlyEntry) {
+      searchSeenDisabled = true;
+      searchBanner.style.display = 'block';
+    }
+  }
   return data.results;
 }
 
@@ -522,7 +547,9 @@ runBtn.addEventListener('click', async () => {
   errorBox.innerHTML = '';
   allResults = [];
   geminiSeenDisabled = false;
+  searchSeenDisabled = false;
   geminiBanner.style.display = 'none';
+  searchBanner.style.display = 'none';
   renderAll();
 
   if (entries.length === 0) {
@@ -542,8 +569,8 @@ runBtn.addEventListener('click', async () => {
     } catch (e) {
       batch.forEach((entry) => {
         allResults.push({
-          name: entry.name || entry.rawUrl, domain: entry.rawUrl,
-          status: 'error', emails: [], guesses: [], pitchEmail: null, error: e.message,
+          name: entry.name || entry.rawUrl || 'Unknown', domain: entry.rawUrl || null,
+          status: 'error', emails: [], guesses: [], pitchEmail: null, pitchError: null, error: e.message,
         });
       });
     }
