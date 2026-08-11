@@ -297,7 +297,7 @@
   </div>
 
 <script>
-const BATCH_SIZE = 10;       // matches server's per-request cap with headroom
+const BATCH_SIZE = 6;        // smaller batches — Gemini's throttle means larger batches take longer to fully drain
 const MAX_TOTAL_ENTRIES = 300;
 
 const textarea = document.getElementById('urls');
