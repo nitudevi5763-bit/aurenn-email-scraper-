@@ -579,6 +579,12 @@ runBtn.addEventListener('click', async () => {
     progressFill.style.width = pct + '%';
     progressLabel.textContent = `Checked ${done} of ${entries.length} — finding emails & drafting pitches…`;
     renderAll();
+
+    // Small pause between batches so we don't burst past Gemini's
+    // free-tier per-minute rate limit when there are more batches to go.
+    if (batch !== batches[batches.length - 1]) {
+      await new Promise((resolve) => setTimeout(resolve, 2500));
+    }
   }
 
   progressLabel.textContent = `Done — checked ${entries.length} sites.`;
